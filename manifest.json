@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.iampoul.fishing-conditions",
+  "name": "Fishing Conditions",
+  "version": "0.1.0",
+  "author": "iampoul",
+  "license": "MIT",
+  "description": "Global fishing weather, marine conditions, and nearby mapped waters.",
+  "kinds": ["service", "bar-widget"],
+  "keepLoaded": true,
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Fishing Conditions",
+    "category": "Info",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "location": null,
+      "savedLocations": [],
+      "units": "auto",
+      "mode": "auto",
+      "refreshMinutes": 30,
+      "windCautionKph": 25,
+      "waveCautionM": 1.5,
+      "showActivityWindows": true
+    },
+    "schema": []
+  }
+}
