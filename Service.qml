@@ -31,6 +31,16 @@ Item {
     property bool marineRequested: false
     property int requestGeneration: 0
     property bool refreshPending: false
+    // Hard response ceilings (bytes) and parse caps. Every request fails closed
+    // when an endpoint exceeds its ceiling instead of buffering unbounded data.
+    readonly property int forecastMaxBytes: 1024 * 1024
+    readonly property int marineMaxBytes: 1024 * 1024
+    readonly property int geocodeMaxBytes: 256 * 1024
+    readonly property int waterMaxBytes: 2 * 1024 * 1024
+    readonly property int stderrMaxBytes: 8 * 1024
+    readonly property int maxWaterFeatures: 200
+    readonly property int maxGeocodeResults: 8
+
     readonly property var location: settings && settings.location ? settings.location : null
     readonly property bool hasLocation: location && Model.validCoordinates(location.latitude, location.longitude)
     readonly property bool stale: forecast !== null && Date.now() - fetchedAt.getTime() > 45 * 60 * 1000
@@ -65,13 +75,13 @@ Item {
         error = ""
         loading = true
         forecastRequest.generation = requestGeneration
-        forecastRequest.exec(curlArguments(Model.buildForecastUrl(location.latitude, location.longitude)))
+        forecastRequest.exec(curlArguments(Model.buildForecastUrl(location.latitude, location.longitude), forecastMaxBytes))
         marineRequested = settings.mode === "coastal" || settings.mode === "offshore" || settings.mode === "auto"
         if (marineRequested && !marineLoading) {
             marineError = ""
             marineLoading = true
             marineRequest.generation = requestGeneration
-            marineRequest.exec(curlArguments(Model.buildMarineUrl(location.latitude, location.longitude)))
+            marineRequest.exec(curlArguments(Model.buildMarineUrl(location.latitude, location.longitude), marineMaxBytes))
         }
     }
 
@@ -82,12 +92,13 @@ Item {
         refresh(false)
     }
 
-    function curlArguments(url) {
+    function curlArguments(url, maxBytes) {
         return [
             "curl", "--fail", "--silent", "--show-error",
             "--connect-timeout", "3", "--max-time", "10",
+            "--max-filesize", String(maxBytes),
             "--header", "Accept: application/json",
-            "--user-agent", "OmarchyFishingConditions/0.1 (+https://github.com/iampoul)",
+            "--user-agent", "OmarchyFishingConditions/0.1.1 (+https://github.com/iampoul)",
             url
         ]
     }
@@ -151,7 +162,7 @@ Item {
         geocodeRequest.generation = geocodeGeneration
         var url = "https://geocoding-api.open-meteo.com/v1/search?count=8&language=en&format=json&name="
             + encodeURIComponent(query)
-        geocodeRequest.exec(curlArguments(url))
+        geocodeRequest.exec(curlArguments(url, geocodeMaxBytes))
     }
 
     function findNearbyWaters(radiusKm) {
@@ -181,10 +192,11 @@ Item {
         overpassRequest.exec([
             "curl", "--fail", "--silent", "--show-error",
             "--connect-timeout", "3", "--max-time", "20",
+            "--max-filesize", String(waterMaxBytes),
             "--request", "POST",
             "--header", "Accept: application/json",
             "--header", "Content-Type: text/plain; charset=utf-8",
-            "--user-agent", "OmarchyFishingConditions/0.1 (+https://github.com/iampoul)",
+            "--user-agent", "OmarchyFishingConditions/0.1.1 (+https://github.com/iampoul)",
             "--data-binary", waterQuery,
             endpoint
         ])
@@ -211,11 +223,20 @@ Item {
     Process {
         id: forecastRequest
         property int generation: -1
-        stdout: StdioCollector { id: forecastBody; waitForEnd: true }
-        stderr: StdioCollector { id: forecastStderr; waitForEnd: true }
+        stdout: BoundedCollector { id: forecastBody; process: forecastRequest; maxBytes: root.forecastMaxBytes }
+        stderr: BoundedCollector { id: forecastStderr; process: forecastRequest; maxBytes: root.stderrMaxBytes }
+        onRunningChanged: if (running) {
+            forecastBody.reset()
+            forecastStderr.reset()
+        }
         onExited: (exitCode) => {
             root.loading = false
             if (generation !== root.requestGeneration) {
+                root.runPendingRefresh()
+                return
+            }
+            if (forecastBody.overflowed || exitCode === 63) {
+                root.refreshFailed("Weather response was too large.")
                 root.runPendingRefresh()
                 return
             }
@@ -240,11 +261,21 @@ Item {
     Process {
         id: marineRequest
         property int generation: -1
-        stdout: StdioCollector { id: marineBody; waitForEnd: true }
-        stderr: StdioCollector { id: marineStderr; waitForEnd: true }
+        stdout: BoundedCollector { id: marineBody; process: marineRequest; maxBytes: root.marineMaxBytes }
+        stderr: BoundedCollector { id: marineStderr; process: marineRequest; maxBytes: root.stderrMaxBytes }
+        onRunningChanged: if (running) {
+            marineBody.reset()
+            marineStderr.reset()
+        }
         onExited: (exitCode) => {
             root.marineLoading = false
             if (generation !== root.requestGeneration) {
+                root.runPendingRefresh()
+                return
+            }
+            if (marineBody.overflowed || exitCode === 63) {
+                root.marineError = "Marine response was too large."
+                root.updateSummary()
                 root.runPendingRefresh()
                 return
             }
@@ -269,8 +300,12 @@ Item {
     Process {
         id: geocodeRequest
         property int generation: -1
-        stdout: StdioCollector { id: geocodeBody; waitForEnd: true }
-        stderr: StdioCollector { id: geocodeStderr; waitForEnd: true }
+        stdout: BoundedCollector { id: geocodeBody; process: geocodeRequest; maxBytes: root.geocodeMaxBytes }
+        stderr: BoundedCollector { id: geocodeStderr; process: geocodeRequest; maxBytes: root.stderrMaxBytes }
+        onRunningChanged: if (running) {
+            geocodeBody.reset()
+            geocodeStderr.reset()
+        }
         onExited: (exitCode) => {
             var completedGeneration = generation
             root.geocodeBusy = false
@@ -279,6 +314,10 @@ Item {
                 return
             }
             root.geocoding = false
+            if (geocodeBody.overflowed || exitCode === 63) {
+                root.geocodeError = "Location search returned too much data."
+                return
+            }
             if (exitCode !== 0) {
                 root.geocodeError = geocodeStderr.text.trim() || "Location search failed."
                 return
@@ -286,12 +325,14 @@ Item {
             try {
                 var response = JSON.parse(geocodeBody.text)
                 var candidates = Array.isArray(response) ? response : (response.results || [])
+                candidates = candidates.slice(0, root.maxGeocodeResults)
                 root.geocodeResults = candidates.map(function(item) {
+                    var rawLabel = item.display_name || [item.name, item.admin1, item.country].filter(Boolean).join(", ")
                     return {
-                        label: item.display_name || [item.name, item.admin1, item.country].filter(Boolean).join(", "),
+                        label: String(rawLabel).slice(0, 160),
                         latitude: Number(item.lat !== undefined ? item.lat : item.latitude),
                         longitude: Number(item.lon !== undefined ? item.lon : item.longitude),
-                        timezone: item.timezone || ""
+                        timezone: String(item.timezone || "").slice(0, 64)
                     }
                 }).filter(function(item) {
                     return item.label && Model.validCoordinates(item.latitude, item.longitude)
@@ -309,11 +350,20 @@ Item {
         property int generation: -1
         property double originLatitude: 0
         property double originLongitude: 0
-        stdout: StdioCollector { id: overpassBody; waitForEnd: true }
-        stderr: StdioCollector { id: overpassStderr; waitForEnd: true }
+        stdout: BoundedCollector { id: overpassBody; process: overpassRequest; maxBytes: root.waterMaxBytes }
+        stderr: BoundedCollector { id: overpassStderr; process: overpassRequest; maxBytes: root.stderrMaxBytes }
+        onRunningChanged: if (running) {
+            overpassBody.reset()
+            overpassStderr.reset()
+        }
         onExited: (exitCode) => {
             if (generation !== root.requestGeneration) {
                 root.findingWater = false
+                return
+            }
+            if (overpassBody.overflowed || exitCode === 63) {
+                root.findingWater = false
+                root.waterError = "Map service returned too much data."
                 return
             }
             if (exitCode !== 0) {
@@ -328,15 +378,16 @@ Item {
                 }
                 if (!response || !Array.isArray(response.elements))
                     throw new Error("Unexpected response.")
-                root.waterFeatures = response.elements.map(function(item) {
+                root.waterFeatures = response.elements.slice(0, root.maxWaterFeatures).map(function(item) {
                     var point = item.center || item
                     var latitude = Number(point.lat)
                     var longitude = Number(point.lon)
+                    var tags = item.tags || {}
                     return {
                         osmType: item.type,
                         osmId: Number(item.id),
-                        name: item.tags && item.tags.name ? item.tags.name : "Unnamed water",
-                        kind: item.tags && (item.tags.water || item.tags.waterway || item.tags.leisure) || "water",
+                        name: tags.name ? String(tags.name).slice(0, 120) : "Unnamed water",
+                        kind: String(tags.water || tags.waterway || tags.leisure || "water").slice(0, 32),
                         latitude: latitude,
                         longitude: longitude,
                         distanceM: Model.haversineMeters(originLatitude, originLongitude, latitude, longitude)

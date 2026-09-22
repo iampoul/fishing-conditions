@@ -86,9 +86,9 @@ function decodeForecast(payload) {
         windKph: wind,
         windDirection: directionLabel(current.wind_direction_10m),
         pressureHpa: finiteNumber(current.surface_pressure),
-        sunrise: Array.isArray(daily.sunrise) ? daily.sunrise[0] || "" : "",
-        sunset: Array.isArray(daily.sunset) ? daily.sunset[0] || "" : "",
-        timezone: typeof payload.timezone === "string" ? payload.timezone : ""
+        sunrise: Array.isArray(daily.sunrise) && daily.sunrise.length > 0 ? String(daily.sunrise[0]).slice(0, 32) : "",
+        sunset: Array.isArray(daily.sunset) && daily.sunset.length > 0 ? String(daily.sunset[0]).slice(0, 32) : "",
+        timezone: typeof payload.timezone === "string" ? payload.timezone.slice(0, 64) : ""
     }
 }
 

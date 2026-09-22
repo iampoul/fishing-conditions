@@ -61,6 +61,11 @@ Omarchy's `shell.json` configuration.
   Overpass. It searches named mapped water areas, is manual and bounded, and
   never runs on the weather-refresh timer. One fallback public endpoint is used
   only when the primary endpoint is busy or unavailable.
+- Every response is fetched with a hard receive ceiling: `curl --max-filesize`
+  plus a bounded collector that terminates the request if the ceiling is
+  exceeded. The plugin fails closed on overflow instead of buffering and
+  parsing unbounded remote data. Parsed results are also capped (geocode
+  candidates, mapped water features, and display strings).
 - Entered address text and selected coordinates are sent only to the provider
   needed for the explicit action. The plugin has no telemetry and does not use
   IP-based location inference.
@@ -86,7 +91,8 @@ qmllint -I "$OMARCHY_PATH/shell" \
 
 `curl` must be present because Quickshell uses it as a tracked process for HTTPS
 requests. The plugin does not execute shell snippets: all requests are passed
-to `curl` as discrete arguments.
+to `curl` as discrete arguments, each with a hard response-size ceiling
+(`--max-filesize`) and a bounded collector that fails closed on overflow.
 
 ## License
 
