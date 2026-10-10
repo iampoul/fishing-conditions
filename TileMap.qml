@@ -117,6 +117,7 @@ Item {
             exec([
                 "curl", "--fail", "--silent", "--show-error",
                 "--connect-timeout", "3", "--max-time", "10",
+                "--max-filesize", "262144",
                 "--retry", "2", "--retry-delay", "1", "--retry-all-errors",
                 "--create-dirs",
                 "--user-agent", "OmarchyFishing/0.2 (+https://github.com/iampoul/fishing-conditions)",

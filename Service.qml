@@ -27,6 +27,11 @@ Item {
     property string pendingGeocodeQuery: ""
     property int requestGeneration: 0
     property bool refreshPending: false
+    readonly property int forecastMaxBytes: 1024 * 1024
+    readonly property int marineMaxBytes: 1024 * 1024
+    readonly property int geocodeMaxBytes: 256 * 1024
+    readonly property int stderrMaxBytes: 8 * 1024
+    readonly property int maxGeocodeResults: 8
 
     readonly property var location: settings && settings.location ? settings.location : null
     readonly property bool hasLocation: location && Model.validCoordinates(location.latitude, location.longitude)
@@ -59,12 +64,12 @@ Item {
         error = ""
         loading = true
         forecastRequest.generation = requestGeneration
-        forecastRequest.exec(curlArguments(Model.buildForecastUrl(location.latitude, location.longitude)))
+        forecastRequest.exec(curlArguments(Model.buildForecastUrl(location.latitude, location.longitude), forecastMaxBytes))
         if (!marineLoading) {
             marineError = ""
             marineLoading = true
             marineRequest.generation = requestGeneration
-            marineRequest.exec(curlArguments(Model.buildMarineUrl(location.latitude, location.longitude)))
+            marineRequest.exec(curlArguments(Model.buildMarineUrl(location.latitude, location.longitude), marineMaxBytes))
         }
     }
 
@@ -75,10 +80,11 @@ Item {
         refresh(false)
     }
 
-    function curlArguments(url) {
+    function curlArguments(url, maxBytes) {
         return [
             "curl", "--fail", "--silent", "--show-error",
             "--connect-timeout", "3", "--max-time", "10",
+            "--max-filesize", String(maxBytes),
             "--header", "Accept: application/json",
             "--user-agent", "OmarchyFishing/0.1 (+https://github.com/iampoul)",
             url
@@ -147,7 +153,7 @@ Item {
         geocodeBusy = true
         geocoding = true
         geocodeRequest.generation = geocodeGeneration
-        geocodeRequest.exec(curlArguments(Model.buildGeocodeUrl(query)))
+        geocodeRequest.exec(curlArguments(Model.buildGeocodeUrl(query), geocodeMaxBytes))
     }
 
     Timer {
@@ -160,11 +166,20 @@ Item {
     Process {
         id: forecastRequest
         property int generation: -1
-        stdout: StdioCollector { id: forecastBody; waitForEnd: true }
-        stderr: StdioCollector { id: forecastStderr; waitForEnd: true }
+        stdout: BoundedCollector { id: forecastBody; process: forecastRequest; maxBytes: root.forecastMaxBytes }
+        stderr: BoundedCollector { id: forecastStderr; process: forecastRequest; maxBytes: root.stderrMaxBytes }
+        onRunningChanged: if (running) {
+            forecastBody.reset()
+            forecastStderr.reset()
+        }
         onExited: (exitCode) => {
             root.loading = false
             if (generation !== root.requestGeneration) {
+                root.runPendingRefresh()
+                return
+            }
+            if (forecastBody.overflowed || exitCode === 63) {
+                root.refreshFailed("Weather response was too large.")
                 root.runPendingRefresh()
                 return
             }
@@ -189,11 +204,21 @@ Item {
     Process {
         id: marineRequest
         property int generation: -1
-        stdout: StdioCollector { id: marineBody; waitForEnd: true }
-        stderr: StdioCollector { id: marineStderr; waitForEnd: true }
+        stdout: BoundedCollector { id: marineBody; process: marineRequest; maxBytes: root.marineMaxBytes }
+        stderr: BoundedCollector { id: marineStderr; process: marineRequest; maxBytes: root.stderrMaxBytes }
+        onRunningChanged: if (running) {
+            marineBody.reset()
+            marineStderr.reset()
+        }
         onExited: (exitCode) => {
             root.marineLoading = false
             if (generation !== root.requestGeneration) {
+                root.runPendingRefresh()
+                return
+            }
+            if (marineBody.overflowed || exitCode === 63) {
+                root.marineError = "Marine response was too large."
+                root.updateSummary()
                 root.runPendingRefresh()
                 return
             }
@@ -218,13 +243,22 @@ Item {
     Process {
         id: geocodeRequest
         property int generation: -1
-        stdout: StdioCollector { id: geocodeBody; waitForEnd: true }
-        stderr: StdioCollector { id: geocodeStderr; waitForEnd: true }
+        stdout: BoundedCollector { id: geocodeBody; process: geocodeRequest; maxBytes: root.geocodeMaxBytes }
+        stderr: BoundedCollector { id: geocodeStderr; process: geocodeRequest; maxBytes: root.stderrMaxBytes }
+        onRunningChanged: if (running) {
+            geocodeBody.reset()
+            geocodeStderr.reset()
+        }
         onExited: (exitCode) => {
             var completedGeneration = generation
             root.geocodeBusy = false
             if (completedGeneration !== root.geocodeGeneration) {
                 root.startPendingPlaceSearch()
+                return
+            }
+            if (geocodeBody.overflowed || exitCode === 63) {
+                root.geocoding = false
+                root.geocodeError = "Location search returned too much data."
                 return
             }
             if (exitCode !== 0) {
@@ -247,7 +281,7 @@ Item {
                 root.nominatimRetried = true
                 root.geocodeBusy = true
                 root.geocodeProvider = 1
-                geocodeRequest.exec(curlArguments(Model.buildNominatimUrl(root.lastGeocodeQuery)))
+                geocodeRequest.exec(curlArguments(Model.buildNominatimUrl(root.lastGeocodeQuery), geocodeMaxBytes))
                 return
             }
             root.geocoding = false
@@ -256,7 +290,7 @@ Item {
                 root.geocodeError = "Location search returned invalid data."
                 return
             }
-            root.geocodeResults = candidates
+            root.geocodeResults = candidates.slice(0, root.maxGeocodeResults)
             if (root.geocodeResults.length === 0)
                 root.geocodeError = "No matching locations were found."
         }

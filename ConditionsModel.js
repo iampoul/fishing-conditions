@@ -94,9 +94,9 @@ function decodeForecast(payload) {
         windKph: wind,
         windDirection: directionLabel(current.wind_direction_10m),
         pressureHpa: finiteNumber(current.surface_pressure),
-        sunrise: Array.isArray(daily.sunrise) ? daily.sunrise[0] || "" : "",
-        sunset: Array.isArray(daily.sunset) ? daily.sunset[0] || "" : "",
-        timezone: typeof payload.timezone === "string" ? payload.timezone : ""
+        sunrise: Array.isArray(daily.sunrise) && daily.sunrise.length > 0 ? String(daily.sunrise[0]).slice(0, 32) : "",
+        sunset: Array.isArray(daily.sunset) && daily.sunset.length > 0 ? String(daily.sunset[0]).slice(0, 32) : "",
+        timezone: typeof payload.timezone === "string" ? payload.timezone.slice(0, 64) : ""
     }
 }
 
@@ -150,7 +150,7 @@ function decodeGeocode(payload) {
         if (props.country)
             parts.push(props.country)
         return {
-            label: parts.join(", ") || (props.name || ""),
+            label: (parts.join(", ") || (props.name || "")).slice(0, 160),
             latitude: latitude,
             longitude: longitude,
             timezone: ""
@@ -160,7 +160,7 @@ function decodeGeocode(payload) {
             return true
         return item.label !== all[index - 1].label
     }).filter(function(item) {
-        return item.label !== "" && item.latitude !== null && item.longitude !== null
+        return item.label !== "" && validCoordinates(item.latitude, item.longitude)
     })
 }
 
@@ -171,15 +171,15 @@ function decodeNominatim(payload) {
         var latitude = finiteNumber(item.lat)
         var longitude = finiteNumber(item.lon)
         return {
-            label: item.display_name || "",
+            label: String(item.display_name || "").slice(0, 160),
             latitude: latitude,
             longitude: longitude,
             timezone: ""
         }
     }).filter(function(item, index, all) {
         if (index === 0)
-            return item.label !== "" && item.latitude !== null && item.longitude !== null
-        return item.label !== "" && item.latitude !== null && item.longitude !== null
+            return item.label !== "" && validCoordinates(item.latitude, item.longitude)
+        return item.label !== "" && validCoordinates(item.latitude, item.longitude)
             && item.label !== all[index - 1].label
     })
 }
