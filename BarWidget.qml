@@ -1,16 +1,17 @@
 import QtQuick
 import qs.Ui
+import qs.Commons
 import "ConditionsModel.js" as Model
 
 BarWidget {
     id: root
 
     moduleName: "io.github.iampoul.fishing-conditions"
+    readonly property color fg: root.bar ? root.bar.foreground : Color.foreground
+    readonly property color urgent: root.bar ? root.bar.urgent : Color.urgent
     readonly property var fishingService: bar && bar.shell
         ? bar.shell.serviceFor(moduleName) : null
     readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
-    readonly property bool popoutSwitchClosing: panelLoader.item
-        ? panelLoader.item.popoutSwitchClosing === true : false
 
     implicitWidth: label.implicitWidth + 16
     implicitHeight: Math.max(label.implicitHeight + 8, barSize)
@@ -28,11 +29,6 @@ BarWidget {
     function togglePanel() {
         if (panelLoader.item)
             panelLoader.item.toggle()
-    }
-
-    function closeForPopoutSwitch() {
-        if (panelLoader.item && panelLoader.item.closeForPopoutSwitch)
-            panelLoader.item.closeForPopoutSwitch()
     }
 
     function updateSettings(next) {
@@ -72,7 +68,7 @@ BarWidget {
         id: label
         anchors.centerIn: parent
         color: root.fishingService && root.fishingService.summary.level === "unsafe"
-            ? "#ffb4ab" : "white"
+            ? root.urgent : root.fg
         text: {
             if (!root.fishingService)
                 return "🎣 Loading"
@@ -84,6 +80,7 @@ BarWidget {
             var units = root.settings.units === "imperial" ? "imperial" : "metric"
             var staleMark = root.fishingService.stale ? " · stale" : ""
             return "🎣 " + root.fishingService.summary.label
+                + " · " + Model.formatTemperature(forecast.temperatureC, units)
                 + " · " + Model.formatWind(forecast.windKph, units) + staleMark
         }
     }
@@ -111,3 +108,4 @@ BarWidget {
         }
     }
 }
+

@@ -16,7 +16,6 @@ function buildForecastUrl(latitude, longitude) {
         + "?latitude=" + encodeURIComponent(String(latitude))
         + "&longitude=" + encodeURIComponent(String(longitude))
         + "&current=temperature_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m,wind_direction_10m,surface_pressure"
-        + "&hourly=precipitation_probability,precipitation,weather_code,wind_speed_10m,wind_gusts_10m,pressure_msl"
         + "&daily=sunrise,sunset,precipitation_probability_max,wind_speed_10m_max,wind_gusts_10m_max"
         + "&forecast_days=1&timezone=auto"
 }
@@ -26,8 +25,17 @@ function buildMarineUrl(latitude, longitude) {
         + "?latitude=" + encodeURIComponent(String(latitude))
         + "&longitude=" + encodeURIComponent(String(longitude))
         + "&current=wave_height,wave_direction,wave_period,sea_surface_temperature"
-        + "&hourly=wave_height,wave_direction,wave_period,swell_wave_height"
         + "&forecast_days=1&timezone=auto"
+}
+
+function buildGeocodeUrl(query) {
+    return "https://photon.komoot.io/api/?q=" + encodeURIComponent(query)
+        + "&limit=8&lang=en"
+}
+
+function buildNominatimUrl(query) {
+    return "https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=8&accept-language=en&q="
+        + encodeURIComponent(query)
 }
 
 function weatherLabel(code) {
@@ -86,9 +94,9 @@ function decodeForecast(payload) {
         windKph: wind,
         windDirection: directionLabel(current.wind_direction_10m),
         pressureHpa: finiteNumber(current.surface_pressure),
-        sunrise: Array.isArray(daily.sunrise) && daily.sunrise.length > 0 ? String(daily.sunrise[0]).slice(0, 32) : "",
-        sunset: Array.isArray(daily.sunset) && daily.sunset.length > 0 ? String(daily.sunset[0]).slice(0, 32) : "",
-        timezone: typeof payload.timezone === "string" ? payload.timezone.slice(0, 64) : ""
+        sunrise: Array.isArray(daily.sunrise) ? daily.sunrise[0] || "" : "",
+        sunset: Array.isArray(daily.sunset) ? daily.sunset[0] || "" : "",
+        timezone: typeof payload.timezone === "string" ? payload.timezone : ""
     }
 }
 
@@ -109,6 +117,71 @@ function decodeMarine(payload) {
         wavePeriodS: wavePeriod,
         waterTemperatureC: waterTemperature
     }
+}
+
+function decodeGeocode(payload) {
+    var features = payload && payload.features
+    if (!Array.isArray(features))
+        return []
+    return features.map(function(item) {
+        var props = item.properties || {}
+        var geometry = item.geometry || {}
+        var coords = Array.isArray(geometry.coordinates) ? geometry.coordinates : []
+        var longitude = finiteNumber(coords[0])
+        var latitude = finiteNumber(coords[1])
+        var parts = []
+        var address = ""
+        if (props.housenumber)
+            address += props.housenumber + " "
+        if (props.street)
+            address += props.street
+        if (address !== "")
+            parts.push(address)
+        else if (props.name)
+            parts.push(props.name)
+        if (props.postcode)
+            parts.push(props.postcode)
+        if (props.city)
+            parts.push(props.city)
+        else if (props.district)
+            parts.push(props.district)
+        if (props.state && props.state !== props.city && props.state !== props.district)
+            parts.push(props.state)
+        if (props.country)
+            parts.push(props.country)
+        return {
+            label: parts.join(", ") || (props.name || ""),
+            latitude: latitude,
+            longitude: longitude,
+            timezone: ""
+        }
+    }).filter(function(item, index, all) {
+        if (index === 0)
+            return true
+        return item.label !== all[index - 1].label
+    }).filter(function(item) {
+        return item.label !== "" && item.latitude !== null && item.longitude !== null
+    })
+}
+
+function decodeNominatim(payload) {
+    if (!Array.isArray(payload))
+        return []
+    return payload.map(function(item) {
+        var latitude = finiteNumber(item.lat)
+        var longitude = finiteNumber(item.lon)
+        return {
+            label: item.display_name || "",
+            latitude: latitude,
+            longitude: longitude,
+            timezone: ""
+        }
+    }).filter(function(item, index, all) {
+        if (index === 0)
+            return item.label !== "" && item.latitude !== null && item.longitude !== null
+        return item.label !== "" && item.latitude !== null && item.longitude !== null
+            && item.label !== all[index - 1].label
+    })
 }
 
 function conditionSummary(forecast, marine, settings) {
@@ -182,12 +255,16 @@ function formatWave(meters, units) {
         : meters.toFixed(1) + " m"
 }
 
-function haversineMeters(latitudeA, longitudeA, latitudeB, longitudeB) {
-    var radians = Math.PI / 180
-    var deltaLatitude = (latitudeB - latitudeA) * radians
-    var deltaLongitude = (longitudeB - longitudeA) * radians
-    var a = Math.sin(deltaLatitude / 2) * Math.sin(deltaLatitude / 2)
-        + Math.cos(latitudeA * radians) * Math.cos(latitudeB * radians)
-        * Math.sin(deltaLongitude / 2) * Math.sin(deltaLongitude / 2)
-    return 6371000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+function formatSun(time) {
+    if (!time)
+        return "—"
+    var parts = String(time).split("T")
+    if (parts.length < 2)
+        return time
+    var timePart = parts[1].split("+")[0].split("Z")[0]
+    var pieces = timePart.split(":")
+    if (pieces.length < 2)
+        return time
+    return pieces[0] + ":" + pieces[1]
 }
+

@@ -1,11 +1,19 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Layouts
+import qs.Commons
 
 Item {
     id: root
 
     property var service: null
+    property var bar: null
     property var selectedLocation: null
+    readonly property color fg: root.bar ? root.bar.foreground : Color.foreground
+    readonly property color bg: root.bar ? root.bar.background : Color.background
+    readonly property color urgent: root.bar ? root.bar.urgent : Color.urgent
+    readonly property color secondary: Color.muted
+    readonly property color border: Color.popups.border
     signal selected(var location)
     signal dismissed()
 
@@ -17,8 +25,7 @@ Item {
             name: candidate.label,
             latitude: candidate.latitude,
             longitude: candidate.longitude,
-            timezone: candidate.timezone || "",
-            source: "place-search"
+            timezone: candidate.timezone || ""
         })
     }
 
@@ -34,9 +41,8 @@ Item {
 
     Rectangle {
         anchors.fill: parent
-        color: "#1e1e2e"
-        radius: 8
-        border.color: "#585b70"
+        color: root.bg
+        border.color: root.border
     }
 
     Column {
@@ -46,23 +52,24 @@ Item {
 
         Text {
             text: "Choose fishing location"
-            color: "white"
+            color: root.fg
             font.bold: true
         }
 
         Text {
             width: parent.width
             wrapMode: Text.Wrap
-            color: "#cdd6f4"
-            text: "Search a city, town, or named place with Open-Meteo, then select a result."
+            color: root.secondary
+            text: "Search a street address, city, or place, then select a result."
         }
 
-        Row {
+        RowLayout {
+            width: parent.width
             spacing: 8
             TextField {
                 id: searchField
-                width: Math.max(220, root.width - 32)
-                placeholderText: "City or place"
+                Layout.fillWidth: true
+                placeholderText: "Address or place"
                 onTextEdited: {
                     if (root.service)
                         root.service.cancelPlaceSearch()
@@ -74,71 +81,28 @@ Item {
                         root.service.searchPlaces(text)
                 }
             }
-        }
-
-        Row {
-            spacing: 8
-            Button {
-                text: "Use coordinates"
-                onClicked: coordinates.visible = !coordinates.visible
-            }
             Button {
                 text: "Close"
                 onClicked: root.dismissed()
             }
         }
 
-        Column {
-            id: coordinates
-            visible: false
-            spacing: 6
-            TextField {
-                id: latitude
-                width: 180
-                placeholderText: "Latitude (-90 to 90)"
-                inputMethodHints: Qt.ImhFormattedNumbersOnly
-            }
-            TextField {
-                id: longitude
-                width: 180
-                placeholderText: "Longitude (-180 to 180)"
-                inputMethodHints: Qt.ImhFormattedNumbersOnly
-            }
-            Button {
-                text: "Use these coordinates"
-                onClicked: {
-                    var lat = Number(latitude.text)
-                    var lon = Number(longitude.text)
-                    if (Number.isFinite(lat) && Number.isFinite(lon)
-                            && lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180) {
-                        root.selected({
-                            name: lat.toFixed(4) + ", " + lon.toFixed(4),
-                            latitude: lat,
-                            longitude: lon,
-                            timezone: "",
-                            source: "coordinates"
-                        })
-                    }
-                }
-            }
-        }
-
         Text {
             visible: root.service && root.service.geocoding
             text: "Searching…"
-            color: "#cdd6f4"
+            color: root.secondary
         }
         Text {
             visible: root.service && root.service.geocodeError !== ""
             text: root.service ? root.service.geocodeError : ""
-            color: "#f38ba8"
+            color: root.urgent
             wrapMode: Text.Wrap
             width: parent.width
         }
 
         ListView {
             width: parent.width
-            height: Math.max(0, parent.height - 230)
+            height: Math.max(0, parent.height - 120)
             clip: true
             model: root.service ? root.service.geocodeResults : []
             delegate: Button {
@@ -150,3 +114,4 @@ Item {
         }
     }
 }
+
