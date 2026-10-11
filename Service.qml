@@ -121,7 +121,7 @@ Item {
     }
 
     function searchPlaces(query) {
-        var text = String(query || "").trim()
+        var text = String(query || "").trim().slice(0, 200)
         if (text.length < 3) {
             geocodeResults = []
             if (text.length > 0 && text.length < 3)

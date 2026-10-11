@@ -70,6 +70,7 @@ Item {
                 id: searchField
                 Layout.fillWidth: true
                 placeholderText: "Address or place"
+                maximumLength: 200
                 onTextEdited: {
                     if (root.service)
                         root.service.cancelPlaceSearch()
