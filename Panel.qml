@@ -124,6 +124,10 @@ Panel {
                     width: parent.width
                     wrapMode: Text.Wrap
                     color: root.secondary
+                    // location.name is a geocoder-derived string saved from
+                    // the picker and is untrusted; PlainText keeps it from
+                    // ever being interpreted as HTML (see LocationPicker.qml).
+                    textFormat: Text.PlainText
                     text: root.settings.location
                         ? root.settings.location.name + (root.service && root.service.ageLabel
                             ? " · updated " + root.service.ageLabel : "")

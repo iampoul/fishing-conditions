@@ -236,11 +236,42 @@ Item {
             height: Math.max(0, parent.height - 120)
             clip: true
             model: root.service ? root.service.geocodeResults : []
-            delegate: Button {
+            // A plain MouseArea + Text delegate, not a Controls.Button: the
+            // label text comes verbatim from a third-party geocoder (OSM
+            // Nominatim / Esri) and is untrusted. Text defaults to
+            // textFormat: Text.AutoText, which will parse and render HTML —
+            // including <img src="..."> — if the string looks like markup,
+            // and QtQuick's rich-text image support fetches that src over
+            // the network with no byte cap or collector, bypassing the
+            // bounded curl requests entirely. textFormat: Text.PlainText
+            // below forces the string to always render as literal text.
+            delegate: Rectangle {
+                id: resultRow
                 required property var modelData
                 width: ListView.view.width
-                text: modelData.label
-                onClicked: root.choose(modelData)
+                implicitHeight: resultLabel.implicitHeight + 12
+                height: implicitHeight
+                color: resultMouse.containsMouse ? Qt.darker(root.bg, 1.15) : root.bg
+                border.color: root.border
+
+                Text {
+                    id: resultLabel
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    anchors.margins: 6
+                    textFormat: Text.PlainText
+                    wrapMode: Text.Wrap
+                    color: root.fg
+                    text: resultRow.modelData.label
+                }
+
+                MouseArea {
+                    id: resultMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    onClicked: root.choose(resultRow.modelData)
+                }
             }
         }
     }
