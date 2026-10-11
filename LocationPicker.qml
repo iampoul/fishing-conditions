@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import Quickshell.Io
 import qs.Commons
 
 Item {
@@ -9,6 +10,7 @@ Item {
     property var service: null
     property var bar: null
     property var selectedLocation: null
+    property string pasteNotice: ""
     readonly property color fg: root.bar ? root.bar.foreground : Color.foreground
     readonly property color bg: root.bar ? root.bar.background : Color.background
     readonly property color urgent: root.bar ? root.bar.urgent : Color.urgent
@@ -27,6 +29,47 @@ Item {
             longitude: candidate.longitude,
             timezone: candidate.timezone || ""
         })
+    }
+
+    // Explicit, bounded clipboard read for the search field's paste action.
+    //
+    // TextEdit's own paste()/insertFromMimeData() calls QMimeData::text()
+    // directly with no size cap or deadline (qquicktextcontrol.cpp), so a
+    // slow-drip or oversized foreign clipboard offer could still stall or
+    // balloon memory during an explicit paste, even though the read is no
+    // longer eager/background (that part was fixed by using TextEdit over
+    // TextField/TextInput). Keys.onPressed below intercepts the paste
+    // shortcut before TextEdit's own handler ever runs, and reads the
+    // clipboard ourselves through `wl-paste`, wrapped in both a wall-clock
+    // deadline (`timeout --signal=KILL`) and a byte ceiling
+    // (BoundedCollector, same fail-closed helper the HTTP requests use).
+    function startBoundedPaste() {
+        if (pasteRequest.running)
+            return
+        root.pasteNotice = ""
+        pasteRequest.command = ["timeout", "--signal=KILL", "2", "wl-paste", "--no-newline"]
+        pasteRequest.running = true
+    }
+
+    Process {
+        id: pasteRequest
+        stdout: BoundedCollector { id: pasteBody; process: pasteRequest; maxBytes: 4096 }
+        stderr: BoundedCollector { id: pasteStderr; process: pasteRequest; maxBytes: 1024 }
+        onRunningChanged: if (running) {
+            pasteBody.reset()
+            pasteStderr.reset()
+        }
+        onExited: (exitCode) => {
+            if (pasteBody.overflowed || exitCode === 124 || exitCode === 137) {
+                root.pasteNotice = "Clipboard content was too large to paste."
+                return
+            }
+            if (exitCode !== 0)
+                return // nothing text-like on the clipboard; silently no-op, same as an empty paste
+            if (pasteBody.text.length === 0)
+                return
+            searchField.insertBounded(pasteBody.text)
+        }
     }
 
     Timer {
@@ -100,9 +143,10 @@ Item {
                 // exhaust memory even if this field is never pasted into.
                 // TextEdit's QQuickTextControl only reads the clipboard on
                 // an explicit user action (paste shortcut), never from a
-                // background signal, and onTextChanged below bounds the
-                // result of that explicit read the same way maximumLength
-                // bounded TextField.
+                // background signal. Ctrl+V/Shift+Insert are intercepted
+                // below and routed through startBoundedPaste() instead of
+                // TextEdit's own unbounded paste(); middle-click (primary
+                // selection paste) is swallowed by the MouseArea below.
                 TextEdit {
                     id: searchField
                     anchors.fill: parent
@@ -116,20 +160,29 @@ Item {
                     font.pixelSize: 13
                     readonly property int maxLength: 200
 
-                    Keys.onReturnPressed: (event) => {
-                        event.accepted = true
-                        autocompleteTimer.stop()
-                        if (root.service)
-                            root.service.searchPlaces(text)
+                    function insertBounded(str) {
+                        if (selectionStart !== selectionEnd)
+                            remove(selectionStart, selectionEnd)
+                        insert(cursorPosition, str)
                     }
-                    Keys.onEnterPressed: (event) => {
-                        event.accepted = true
-                        autocompleteTimer.stop()
-                        if (root.service)
-                            root.service.searchPlaces(text)
+
+                    Keys.onPressed: (event) => {
+                        if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                            event.accepted = true
+                            autocompleteTimer.stop()
+                            if (root.service)
+                                root.service.searchPlaces(text)
+                            return
+                        }
+                        if (event.matches(StandardKey.Paste)) {
+                            event.accepted = true
+                            root.startBoundedPaste()
+                            return
+                        }
                     }
 
                     onTextChanged: {
+                        root.pasteNotice = ""
                         if (text.length > maxLength) {
                             var pos = cursorPosition
                             text = text.slice(0, maxLength)
@@ -141,6 +194,15 @@ Item {
                         autocompleteTimer.restart()
                     }
                 }
+
+                // Blocks middle-click (primary-selection) paste from ever
+                // reaching the TextEdit below, so the only paste path is
+                // the bounded one above.
+                MouseArea {
+                    anchors.fill: parent
+                    acceptedButtons: Qt.MiddleButton
+                    onClicked: {}
+                }
             }
 
             Button {
@@ -149,6 +211,13 @@ Item {
             }
         }
 
+        Text {
+            visible: root.pasteNotice !== ""
+            text: root.pasteNotice
+            color: root.urgent
+            wrapMode: Text.Wrap
+            width: parent.width
+        }
         Text {
             visible: root.service && root.service.geocoding
             text: "Searching…"

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.iampoul.fishing-conditions",
   "name": "Fishing Conditions",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "author": "iampoul",
   "license": "MIT",
   "description": "Simple fishing conditions: weather, wind, waves, and sunrise/sunset for a chosen location.",
