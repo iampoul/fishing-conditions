@@ -66,22 +66,83 @@ Item {
         RowLayout {
             width: parent.width
             spacing: 8
-            TextField {
-                id: searchField
+
+            Item {
+                id: searchFieldFrame
                 Layout.fillWidth: true
-                placeholderText: "Address or place"
-                maximumLength: 200
-                onTextEdited: {
-                    if (root.service)
-                        root.service.cancelPlaceSearch()
-                    autocompleteTimer.restart()
+                implicitHeight: 32
+
+                Rectangle {
+                    anchors.fill: parent
+                    color: root.bg
+                    border.color: root.border
+                    radius: 4
                 }
-                onAccepted: {
-                    autocompleteTimer.stop()
-                    if (root.service)
-                        root.service.searchPlaces(text)
+
+                Text {
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.leftMargin: 6
+                    anchors.rightMargin: 6
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "Address or place"
+                    color: root.secondary
+                    elide: Text.ElideRight
+                    visible: searchField.text.length === 0
+                }
+
+                // Plain QtQuick TextEdit, not QtQuick.Controls TextField.
+                // TextInput/TextField connect their canPaste check to the
+                // global QClipboard::dataChanged signal and eagerly call
+                // mimeData->text() on *every* clipboard owner change system-
+                // wide, with no size cap on the native Wayland read — a
+                // streaming foreign clipboard offer can stall the shell or
+                // exhaust memory even if this field is never pasted into.
+                // TextEdit's QQuickTextControl only reads the clipboard on
+                // an explicit user action (paste shortcut), never from a
+                // background signal, and onTextChanged below bounds the
+                // result of that explicit read the same way maximumLength
+                // bounded TextField.
+                TextEdit {
+                    id: searchField
+                    anchors.fill: parent
+                    anchors.margins: 6
+                    clip: true
+                    wrapMode: TextEdit.NoWrap
+                    textFormat: TextEdit.PlainText
+                    color: root.fg
+                    selectByMouse: true
+                    persistentSelection: false
+                    font.pixelSize: 13
+                    readonly property int maxLength: 200
+
+                    Keys.onReturnPressed: (event) => {
+                        event.accepted = true
+                        autocompleteTimer.stop()
+                        if (root.service)
+                            root.service.searchPlaces(text)
+                    }
+                    Keys.onEnterPressed: (event) => {
+                        event.accepted = true
+                        autocompleteTimer.stop()
+                        if (root.service)
+                            root.service.searchPlaces(text)
+                    }
+
+                    onTextChanged: {
+                        if (text.length > maxLength) {
+                            var pos = cursorPosition
+                            text = text.slice(0, maxLength)
+                            cursorPosition = Math.min(pos, text.length)
+                            return
+                        }
+                        if (root.service)
+                            root.service.cancelPlaceSearch()
+                        autocompleteTimer.restart()
+                    }
                 }
             }
+
             Button {
                 text: "Close"
                 onClicked: root.dismissed()
